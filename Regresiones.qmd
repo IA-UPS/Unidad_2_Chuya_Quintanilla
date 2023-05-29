@@ -1,0 +1,274 @@
+---
+title: "Métodos de clasificación y Modelos de regresión"
+author: "María Isabel Chuya - Nataly Quintanilla"
+format: pdf
+editor: visual
+---
+
+# Métodos de clasificación
+
+Veremos un resumen de todos los métodos que hemos visto incluyendo Knn y Naive Bayes. Tened en cuenta que es un método de clasificación multiclase con más de 2 niveles.
+
+## Cargamos librerías
+
+```{r}
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(glmnet) ## regresiones logisitcas
+library(caret) ### bayes y knn
+library(e1071) ## bayes
+
+```
+
+## Cargamos datos
+
+```{r}
+# quitamos la primera columna
+datos <- read.table("./yeast.data",header = F)[,-1]
+
+```
+
+Creamos las funciones que vamos a necesitar, es decir las funciones de transformación
+
+```{r}
+min.max.mean <- function(X) apply(X,2,function(x) (x-mean(x))/(max(x)-min(x)))
+min.max.median <- function(X) apply(X,2,function(x) (x-median(x))/(max(x)-min(x)))
+min.max <- function(X) apply(X,2,function(x) (x-min(x))/(max(x)-min(x)))
+zscore <- function(X) apply(X,2,function(x) (x-mean(x))/sd(x))
+l2 <- function(X) apply(X,2,function(x) x/sqrt(sum(x^2))) 
+```
+
+Para hacer las transformaciones, solamente necesitamos las variables numéricas.
+
+```{r}
+datos <- as.data.frame(datos)
+datos.numericos <- datos[, which(unlist(lapply(datos, is.numeric)))]
+clase <- datos$V10 <- as.factor(datos$V10)
+colnames(datos.numericos) <- paste0("Var", rep(1:8))
+### procedemos a crear una lista con todas las transformaciones
+
+datos.lista <- list(
+  raw = bind_cols(datos.numericos,clase=clase),
+  zscore = bind_cols(zscore(datos.numericos), clase = clase),
+  l2 = bind_cols(l2(datos.numericos), clase = clase),
+  media = bind_cols(min.max.mean(datos.numericos), clase = clase),
+  mediana = bind_cols(min.max.median(datos.numericos), clase = clase),
+  min_max = bind_cols(min.max(datos.numericos), clase = clase))
+
+```
+
+## Descriptiva Gráfica
+
+Al ser demasiadas variables, podemos realizar un `melt`
+
+```{r}
+lista_graficos <- vector("list",length=length(datos.lista))
+datos.melt <- lapply(datos.lista,reshape2::melt)
+
+```
+
+Podemos ver la cabecera de alguna transfomacion para ver el nombre nuevo de las variables
+
+```{r}
+head(datos.melt$zscore)
+```
+
+```{r}
+for(l in 1:length(datos.melt)){
+  
+  X <- datos.melt[[l]]
+  nombre <- names(datos.melt)[l]
+  lista_graficos[[l]] <- ggplot(X,aes(y=value,fill=clase))+geom_boxplot()+ggtitle(nombre)+xlab("")+ylab("")
+  
+  
+}
+
+names(lista_graficos) <- paste0("plot",1:length(datos.lista))
+
+lista_graficos$plot1
+lista_graficos$plot2
+lista_graficos$plot3
+lista_graficos$plot4
+lista_graficos$plot5
+lista_graficos$plot6
+
+
+```
+
+Así por ejemplo la normalización min-max es la mejor, puesto que no tenemos outliers
+
+Otra forma de ver la transfomración es mediante gráficos de densidad
+
+```{r}
+for(l in 1:length(datos.melt)){
+  
+  X <- datos.melt[[l]]
+  nombre <- names(datos.melt)[l]
+  lista_graficos[[l]] <- ggplot(X,aes(x=value))+geom_density()+ggtitle(nombre)+xlab("")+ylab("")
+  
+  
+}
+
+names(lista_graficos) <- paste0("plot",1:length(datos.lista))
+
+lista_graficos$plot1
+lista_graficos$plot2
+lista_graficos$plot3
+lista_graficos$plot4
+lista_graficos$plot5
+lista_graficos$plot6
+```
+
+Sin embargo, al ver la densidad, no tenemos una transformacion uniforme.
+
+```{r}
+corrplot::corrplot(cor(datos.numericos))
+```
+
+```{r}
+corrplot::corrplot(cor(datos.lista$media[,-ncol(datos)]))
+```
+
+### Partición de datos
+
+NOTA: PODEMOS CREAR LA PARTICIÓN CON `caret` o a mano, el 70 porciento de los datos. A mano sería
+
+```{r}
+set.seed(123456789)
+n  <- nrow(datos)
+idx <- sample(1:n,n*0.7)
+### para conjunto de datos podemos realizar el split
+datos.train.lista <- lapply(datos.lista, function(x) x[idx,])
+datos.test.lista <- lapply(datos.lista, function(x) x[-idx,])
+
+```
+
+### Ejemplo regresión logística
+
+https://rstudio-pubs-static.s3.amazonaws.com/38437_18a39a6487134d67b5f5e0d47221ec8d.html
+
+https://rpubs.com/jkylearmstrong/logit_w\_caret
+
+alpha=1 es lasso y 0 es ridge
+
+```{r warning=FALSE}
+#Fijamos la semilla y la muestra
+set.seed(123456789)
+trControl <- trainControl(method = 'cv', number = 10)
+n  <- nrow(datos)
+idx <- sample(1:n,size=n*0.7,replace=F)
+lambda_seq <- seq(0.01, 1, by = 0.01)
+
+#Para conjunto de datos podemos realizar el split
+entrenamiento <- lapply(datos.lista, function(x) x[idx,])
+test <- lapply(datos.lista, function(x) x[-idx,])
+
+#Regresion logistica Lineal
+set.seed(123456789)
+myfnlog <- function(x) train(clase ~ ., data = x, method = "multinom", trControl = trControl, trace = F)
+logistica.lista <- lapply(entrenamiento,myfnlog)
+logisita.pred <- vector("list",length = length(datos.lista))
+for(l in 1:length(datos.lista)){
+  logisita.pred[[l]] <- predict(logistica.lista[[l]],test[[l]])
+}
+names(logisita.pred) <- names(datos.lista)
+accuracy <- vector("numeric",length = length(datos.lista))
+for(l in 1:length(datos.lista)){
+  accuracy[l] <- confusionMatrix(test$raw$clase,logisita.pred[[l]])$overall[1]
+}
+names(accuracy) <- names(datos.lista)
+accuracy_logis<-accuracy
+
+#Ridge
+set.seed(123456789)
+myfnridge <- function(x) train(clase ~ ., data = x, method = "glmnet", trControl = trControl,tuneGrid = expand.grid(alpha=0,lambda=lambda_seq), trace = F)
+
+logistica.lista <- lapply(entrenamiento,myfnridge)
+logisita.pred <- vector("list",length = length(datos.lista))
+for(l in 1:length( datos.lista)){
+  logisita.pred[[l]] <- predict(logistica.lista[[l]],test[[l]])
+}
+names(logisita.pred) <- names(datos.lista)
+accuracy <- vector("numeric",length = length(datos.lista))
+for(l in 1:length(datos.lista)){
+  accuracy[l] <- confusionMatrix(test$raw$clase,logisita.pred[[l]])$overall[1]
+}
+names(accuracy) <- names(datos.lista)
+ridgeaccuracy <- accuracy
+
+# Regresion logistica de lasso
+set.seed(123456789)
+Dlasso <- function(x) train(clase ~ ., data = x, method = "glmnet", trControl = trControl,tuneGrid = expand.grid(alpha=1,lambda=lambda_seq), trace = F)
+
+logistica.lista <- lapply(entrenamiento,Dlasso)
+logisita.pred <- vector("list",length = length(datos.lista))
+for(l in 1:length( datos.lista)){
+  logisita.pred[[l]] <- predict(logistica.lista[[l]],test[[l]])
+}
+names(logisita.pred) <- names(datos.lista)
+accuracy <- vector("numeric",length = length(datos.lista))
+for(l in 1:length(datos.lista)){
+  accuracy[l] <- confusionMatrix(test$raw$clase,logisita.pred[[l]])$overall[1]
+}
+names(accuracy) <- names(datos.lista)
+lassoaccuracy <- accuracy
+print(lassoaccuracy)
+
+#Knn
+set.seed(123456789)
+myfnknn <- function(x) train(clase ~ ., data = x, method = "knn", trControl = trControl, tuneLength = 20)
+
+logistica.lista <- lapply(entrenamiento,myfnknn)
+logisita.pred <- vector("list",length = length(datos.lista))
+for(l in 1:length( datos.lista)){
+  logisita.pred[[l]] <- predict(logistica.lista[[l]],test[[l]])
+}
+names(logisita.pred) <- names(datos.lista)
+accuracy <- vector("numeric",length = length(datos.lista))
+for(l in 1:length(datos.lista)){
+  accuracy[l] <- confusionMatrix(test$raw$clase,logisita.pred[[l]])$overall[1]
+}
+names(accuracy) <- names(datos.lista)
+knnaccuracy <- accuracy
+
+
+#Naive Bayes
+set.seed(123456789)
+myfnknn <- function(x) train(clase ~ ., data = x, method = "naive_bayes", trControl = trControl, tuneLength = 20)
+
+logistica.lista <- lapply(entrenamiento,myfnknn)
+logisita.pred <- vector("list",length = length(datos.lista))
+for(l in 1:length( datos.lista)){
+  logisita.pred[[l]] <- predict(logistica.lista[[l]],test[[l]])
+}
+names(logisita.pred) <- names(datos.lista)
+accuracy <- vector("numeric",length = length(datos.lista))
+for(l in 1:length(datos.lista)){
+  accuracy[l] <- confusionMatrix(test$raw$clase,logisita.pred[[l]])$overall[1]
+}
+names(accuracy) <- names(datos.lista)
+bayesaccuracy <- accuracy
+
+
+#Crearemos una matriz de 5x6
+matriz <- matrix(nrow = 5, ncol = 6)
+
+# Asignaremos los vectores a las filas de la matriz
+matriz[1, ] <- accuracy
+matriz[2, ] <- ridgeaccuracy
+matriz[3, ] <- lassoaccuracy
+matriz[4, ] <- knnaccuracy
+matriz[5, ] <- bayesaccuracy
+
+# Vamos a dar nombres a las columnas y filas de nuestra matriz
+Fila <- c("Regresion Logis", "Regresion Ridge", "Regresion Lassso", "Knn", "Naive Bayes")
+Columna <- c("raw", "zscore", "l2", "media", "mediana", "min_max")
+
+# Asignar nombres a las filas y columnas de la matriz
+rownames(matriz) <- Fila
+colnames(matriz) <- Columna
+
+# Vamos a omprimir la matriz
+print(matriz)
+```
