@@ -1,0 +1,231 @@
+---
+title: "Analisis de un conjunto de datos"
+author: "Alex Guaman - Evelyn Faican - Maria Isabel Chuya"
+format: pdf
+editor: visual
+---
+
+```{r}
+library(ggplot2)
+library(e1071)
+library(dplyr)
+library(reshape2)
+library(corrplot)
+library(caret)
+library(pROC)
+library(gridExtra)
+library(grid)
+library(ggfortify)
+library(purrr)
+library(nnet)
+library(ggstatsplot)
+library(knitr)
+library(lavaan)
+library(doParallel) # parallel processing
+registerDoParallel()
+require(foreach)
+require(iterators)
+require(parallel)
+```
+
+```{r}
+# Cargar los datos
+datos <- read.table("heart.dat",header = F)
+datos.numericos <- datos[, which(unlist(lapply(datos, is.numeric)))]
+clase <- datos$V10 <- as.factor(datos$V10)
+colnames(datos.numericos) <- paste0("Var", rep(1:13))
+
+# Explorar los datos
+head(datos)  # Ver las primeras filas del conjunto de datos
+summary(datos)  # Obtener estadísticas descriptivas de las variables
+
+# Calcular medidas de tendencia central
+mean(datos$variable)  # Calcular la media de una variable
+median(datos$variable)  # Calcular la mediana de una variable
+table(datos$variable)  # Obtener la tabla de frecuencias de una variable categórica
+
+# Calcular medidas de dispersión
+sd(datos$variable)  # Calcular la desviación estándar de una variable
+range(datos$variable)  # Obtener el rango de una variable
+
+str(datos)
+
+```
+
+```{r}
+summary(datos)
+
+```
+
+#### PCA
+
+```{r}
+pca <- prcomp(datos[,c("V1","V2","V3","V4","V5","V6","V7","V8","V9","V11","V12","V13","V14")])
+
+summary(pca)
+biplot(pca)
+ggplot(pca, aes(x = PC1, y = PC2, col = datos$V14)) + geom_point()
+```
+
+#### UNIVARIANTE
+
+```{r}
+
+## Create a frequency table
+diagnosis.table <- table(datos$V2)
+colors <- terrain.colors(2) 
+# Create a pie chart 
+diagnosis.prop.table <- prop.table(diagnosis.table)*100
+diagnosis.prop.df <- as.data.frame(diagnosis.prop.table)
+pielabels <- sprintf("%s - %3.1f%s", diagnosis.prop.df[,1], diagnosis.prop.table, "%")
+
+pie(diagnosis.prop.table,
+  labels=pielabels,  
+  clockwise=TRUE,
+  col=colors,
+  border="gainsboro",
+  radius=0.8,
+  cex=0.8, 
+  main="Enfermedad Cardiaca")
+legend(1, .4, legend=diagnosis.prop.df[,1], cex = 0.7, fill = colors)
+```
+
+#### Analisis UNIVARIANTE
+
+```{r}
+
+V.Cuantitativas <- data.frame("V1"= datos$V1,"V2"= datos$V2,"V3"= datos$V3,"V4"=datos$V4,"V5"=datos$V5,"V6"=datos$V6,"V7"= datos$V7,"V8"= datos$V8,"V9"=datos$V9,"V11"=datos$V11,"V12"=datos$V12,"V13"=datos$V13,"V14"=datos$V14)
+knitr::kable(summary(V.Cuantitativas))
+
+```
+
+#### DESVIACION ESTANDAR
+
+```{r}
+
+z <- data.frame("Variable"= c("V1","V2","V3","V4","V5","V6","V7","V8","V9","V11","V12","V13","V14"),"Desv.Estandar"= c(sqrt(var(datos$V1)),sqrt(var(datos$V2)),sqrt(var(datos$V3)),sqrt(var(datos$V4)),sqrt(var(datos$V5)),sqrt(var(datos$V6)),sqrt(var(datos$V7)),sqrt(var(datos$V8)),sqrt(var(datos$V9)),sqrt(var(datos$V11)),sqrt(var(datos$V12)),sqrt(var(datos$V13)),sqrt(var(datos$V14))))
+knitr::kable(z)
+
+```
+
+#### BIVARIANTE o MULTIVARIANTE
+
+```{r}
+
+M <- cor(V.Cuantitativas)
+corrplot(M, method="number")
+
+```
+
+#### Matriz de Varianzas y Covarianzas
+
+```{r}
+
+cov <- cov(V.Cuantitativas)
+knitr::kable(cov)
+
+```
+
+```{r}
+
+ggbetweenstats(datos,V14,V1,type = "nonparametric")
+
+```
+
+```{r}
+ggbetweenstats(datos,V14,V2,type = "nonparametric")
+
+```
+
+```{r}
+ggbetweenstats(datos,V14,V3,type = "nonparametric")
+
+```
+
+```{r}
+ggbetweenstats(datos,V14,V4,type = "nonparametric")
+
+```
+
+```{r}
+ggbetweenstats(datos,V14,V5,type = "nonparametric")
+
+```
+
+```{r}
+ggbetweenstats(datos,V14,V6,type = "nonparametric")
+
+```
+
+```{r}
+ggbetweenstats(datos,V14,V7,type = "nonparametric")
+
+```
+
+```{r}
+ggbetweenstats(datos,V14,V8,type = "nonparametric")
+
+```
+
+```{r}
+ggbetweenstats(datos,V14,V9,type = "nonparametric")
+
+```
+
+```{r}
+ggbetweenstats(datos,V14,V11,type = "nonparametric")
+
+```
+
+```{r}
+ggbetweenstats(datos,V14,V12,type = "nonparametric")
+
+```
+
+```{r}
+ggbetweenstats(datos,V14,V13,type = "nonparametric")
+
+```
+
+#### Regresión Logistica Modelo KNN
+
+```{r}
+set.seed(123456)
+levels(datos$V14) <- c("D","N")
+train <- sample(nrow(datos),size = nrow(datos)*0.7)
+
+dat.train <- datos[train,]
+dat.test <- datos[-train, -ncol(datos)]
+csa <- datos[-train,ncol(datos)]
+
+nrow(dat.train)
+
+nrow(dat.test)
+
+fitControl <- trainControl(method="cv",
+                            number = 5,
+                            preProcOptions = list(thresh = 0.99), # threshold for pca preprocess
+                            classProbs = TRUE,
+                            summaryFunction = twoClassSummary)
+datos$V14<- factor(datos$V14)
+
+model_knn <- train(V14~.,
+                   data = dat.train,
+                   method="knn",
+                   metric="ROC",
+                   preProcess = c('center', 'scale'),
+                   tuneLength=10,
+                   trControl=fitControl)
+
+pred_knn <- predict(model_knn, dat.test)
+cm_knn <- confusionMatrix(pred_knn, csa, positive = "N")
+cm_knn
+plot(model_knn)
+
+
+```
+
+#### 
+
+```         
+```
